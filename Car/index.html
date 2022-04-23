@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Car Simulation</title>
+    <style>
+        body {
+            margin: 0;
+			overflow:hidden;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        .handsfree-started.handsfree-show-debug .handsfree-debugger,
+        .handsfree-started.handsfree-show-debug .handsfree-canvas {
+            position: fixed;
+            left: 75%;
+            display: block;
+            width: 25% !important;
+            top: 70%;
+
+        }
+    </style>
+</head>
+
+<body>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.2.0/p5.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r124/three.min.js"></script>
+    <script src="https://baronwatts.com/scripts/LegacyJSONLoader.js"></script>
+    <script src="https://threejs.org/examples/js/libs/Detector.js"></script>
+    <script src="https://threejs.org/examples/js/libs/stats.min.js"></script>
+    <script src="https://cdn.rawgit.com/schteppe/cannon.js/master/build/cannon.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/handsfree@8.5.1/build/lib/assets/handsfree.css" />
+    <script src="https://unpkg.com/handsfree@8.5.1/build/lib/handsfree.js"></script>
+    <script>
+        class Game {
+            constructor() {
+                this.container;
+                this.stats;
+                this.camera;
+                this.scene;
+                this.renderer;
+                this.debug = true;
+                this.debugPhysics = true;
+                this.fixedTimeStep = 1.0 / 60.0;
+
+                this.container = document.createElement('div');
+                this.container.style.height = '100%';
+                document.body.appendChild(this.container);
+
+                const game = this;
+
+                this.js = { forward: 0, turn: 0 };
+                this.clock = new THREE.Clock();
+
+                this.init();
+
+                window.onError = function (error) {
+                    console.error(JSON.stringify(error));
+                }
+            }
+
+            init() {
+                this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 500);
+                this.camera.position.set(0, 6, -15);
+
+                this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color(0x00ffff);
+
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                this.renderer.setPixelRatio(window.devicePixelRatio);
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.shadowMap.enabled = true;
+                this.container.appendChild(this.renderer.domElement);
+
+                this.helper = new CannonHelper(this.scene);
+                this.helper.addLights(this.renderer);
+
+                window.addEventListener('resize', function () { game.onWindowResize(); }, false);
+
+                // stats
+                if (this.debug) {
+                    this.stats = new Stats();
+                    this.container.appendChild(this.stats.dom);
+                }
+
+                this.initPhysics();
+            }
+
+            initPhysics() {
+                this.physics = {};
+
+                const game = this;
+                const world = new CANNON.World();
+                this.world = world;
+
+                world.broadphase = new CANNON.SAPBroadphase(world);
+                world.gravity.set(0, -10, 0);
+                world.defaultContactMaterial.friction = 0;
+
+                const groundMaterial = new CANNON.Material("groundMaterial");
+                const wheelMaterial = new CANNON.Material("wheelMaterial");
+                const wheelGroundContactMaterial = new CANNON.ContactMaterial(wheelMaterial, groundMaterial, {
+                    friction: 0.3,
+                    restitution: 0,
+                    contactEquationStiffness: 1000
+                });
+
+                // We must add the contact materials to the world
+                world.addContactMaterial(wheelGroundContactMaterial);
+
+
+                const chassisShape = new CANNON.Box(new CANNON.Vec3(1, 0.3, 2));
+                const chassisBody = new CANNON.Body({ mass: 150 });
+                chassisBody.addShape(chassisShape);
+                chassisBody.position.set(0, 4, 0);
+                chassisBody.angularVelocity.set(0, 0, 0);
+                this.helper.addVisual(chassisBody, 'car');
+
+
+
+                this.followCam = new THREE.Object3D();
+                this.followCam.position.copy(this.camera.position);
+                this.scene.add(this.followCam);
+                this.followCam.parent = chassisBody.threemesh;
+                this.helper.shadowTarget = chassisBody.threemesh;
+
+                const options = {
+                    radius: 0.3,
+                    directionLocal: new CANNON.Vec3(0, -1, 0),
+                    suspensionStiffness: 45,
+                    suspensionRestLength: 0.4,
+                    frictionSlip: 5,
+                    dampingRelaxation: 2.3,
+                    dampingCompression: 4.5,
+                    maxSuspensionForce: 200000,
+                    rollInfluence: 0.01,
+                    axleLocal: new CANNON.Vec3(-1, 0, 0),
+                    chassisConnectionPointLocal: new CANNON.Vec3(1, 1, 0),
+                    maxSuspensionTravel: 0.25,
+                    customSlidingRotationalSpeed: -30,
+                    useCustomSlidingRotationalSpeed: true
+                };
+
+                // Create the vehicle
+                const vehicle = new CANNON.RaycastVehicle({
+                    chassisBody: chassisBody,
+                    indexRightAxis: 0,
+                    indexUpAxis: 1,
+                    indexForwardAxis: 2
+                });
+
+
+                const axlewidth = 0.8;
+                options.chassisConnectionPointLocal.set(axlewidth, 0, -1);
+                vehicle.addWheel(options);
+
+                options.chassisConnectionPointLocal.set(-axlewidth, 0, -1);
+                vehicle.addWheel(options);
+
+                options.chassisConnectionPointLocal.set(axlewidth, 0, 1);
+                vehicle.addWheel(options);
+
+                options.chassisConnectionPointLocal.set(-axlewidth, 0, 1);
+                vehicle.addWheel(options);
+
+
+                vehicle.addToWorld(world);
+
+                const wheelBodies = [];
+
+                vehicle.wheelInfos.forEach(function (wheel) {
+                    const cylinderShape = new CANNON.Cylinder(wheel.radius, wheel.radius, wheel.radius / 2, 20);
+                    const wheelBody = new CANNON.Body({ mass: 1, material: wheelMaterial });
+                    const q = new CANNON.Quaternion();
+                    q.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), Math.PI / 2);
+                    wheelBody.addShape(cylinderShape, new CANNON.Vec3(), q);
+                    wheelBodies.push(wheelBody);
+                    game.helper.addVisual(wheelBody, 'wheel');
+                });
+
+
+                //wheel model
+                var loader = new THREE.LegacyJSONLoader();
+                loader.load('https://raw.githubusercontent.com/baronwatts/models/master/dodge-wheel.js', function (geometry, materials) {
+                    wheelBodies.map((d, i) => {
+                        var model = new THREE.Mesh(geometry, materials);
+                        model.geometry.center();
+                        model.scale.set(2, 2, 2);
+                        model.castShadow = true;
+                        model.material.shading = THREE.SmoothShading;
+                        model.geometry.computeVertexNormals(true);
+                        if (i == 1 || i == 3) model.rotateY(Math.PI);
+                        wheelBodies[i].threemesh.add(model);
+                    });
+                });
+
+
+
+
+                // Update wheels
+                world.addEventListener('postStep', function () {
+
+                    for (var i = 0; i < game.vehicle.wheelInfos.length; i++) {
+                        game.vehicle.updateWheelTransform(i);
+                        var t = game.vehicle.wheelInfos[i].worldTransform;
+                        wheelBodies[i].threemesh.position.copy(t.position);
+                        wheelBodies[i].threemesh.quaternion.copy(t.quaternion);
+                    }
+                });
+
+                this.vehicle = vehicle;
+
+
+                let matrix = [];
+                let sizeX = 64,
+                    sizeY = 64,
+                    slope = 15,
+                    steep = 1;
+
+                for (let i = 0; i < sizeX; i++) {
+                    matrix.push([]);
+                    for (var j = 0; j < sizeY; j++) {
+                        var height = Math.cos(i / sizeX * Math.PI * slope) * Math.sin(j / sizeY * Math.PI * slope) * steep + steep;
+                        //the outer 4 edges of the plane
+                        if (i === 0 || i === sizeX - 1 || j === 0 || j === sizeY - 1)
+                            height = 0;
+                        matrix[i].push(height);
+                    }
+                }
+
+
+                var hfShape = new CANNON.Heightfield(matrix, {
+                    elementSize: 100 / sizeX
+                });
+                var hfBody = new CANNON.Body({ mass: 0 });
+                hfBody.addShape(hfShape);
+                hfBody.position.set(-sizeX * hfShape.elementSize / 2, -4, sizeY * hfShape.elementSize / 2);
+                hfBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+                world.add(hfBody);
+                this.helper.addVisual(hfBody, 'landscape');
+
+                //===================================================== model           
+                // var groundShape = new CANNON.Plane();
+                // var groundBody = new CANNON.Body({
+                //     mass: 0
+                // });
+                // groundBody.addShape(groundShape);
+                // groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+                // world.add(groundBody);
+                // this.helper.addVisual(groundBody);
+
+
+                this.animate();
+            }
+
+            joystickCallback(forward, turn) {
+                this.js.forward = -forward;
+                this.js.turn = -turn;
+            }
+
+            updateDrive(forward = this.js.forward, turn = this.js.turn) {
+
+                const maxSteerVal = 0.6;
+                const maxForce = 500;
+                const brakeForce = 10;
+
+                const force = maxForce * forward;
+                const steer = maxSteerVal * turn;
+
+                if (forward != 0) {
+                    this.vehicle.setBrake(0, 0);
+                    this.vehicle.setBrake(0, 1);
+                    this.vehicle.setBrake(0, 2);
+                    this.vehicle.setBrake(0, 3);
+
+                    this.vehicle.applyEngineForce(force, 0);
+                    this.vehicle.applyEngineForce(force, 1);
+                } else {
+                    this.vehicle.setBrake(brakeForce, 0);
+                    this.vehicle.setBrake(brakeForce, 1);
+                    this.vehicle.setBrake(brakeForce, 2);
+                    this.vehicle.setBrake(brakeForce, 3);
+                }
+
+                this.vehicle.setSteeringValue(steer, 2);
+                this.vehicle.setSteeringValue(steer, 3);
+            }
+
+            onWindowResize() {
+                this.camera.aspect = window.innerWidth / window.innerHeight;
+                this.camera.updateProjectionMatrix();
+
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+
+            }
+
+            updateCamera() {
+                this.camera.position.lerp(this.followCam.getWorldPosition(new THREE.Vector3()), 0.05);
+                this.camera.lookAt(this.vehicle.chassisBody.threemesh.position);
+                if (this.helper.sun != undefined) {
+                    this.helper.sun.position.copy(this.camera.position);
+                    this.helper.sun.position.y += 10;
+                }
+            }
+
+            animate() {
+                const game = this;
+
+                requestAnimationFrame(function () { game.animate(); });
+
+                const now = Date.now();
+                if (this.lastTime === undefined) this.lastTime = now;
+                const dt = (Date.now() - this.lastTime) / 1000.0;
+                this.FPSFactor = dt;
+                this.lastTime = now;
+
+                this.world.step(this.fixedTimeStep, dt);
+                this.helper.updateBodies(this.world);
+
+                this.updateDrive();
+                this.updateCamera();
+
+                this.renderer.render(this.scene, this.camera);
+
+                if (this.stats != undefined) this.stats.update();
+
+            }
+        }
+
+        class CannonHelper {
+            constructor(scene) {
+                this.scene = scene;
+            }
+
+            addLights(renderer) {
+                renderer.shadowMap.enabled = true;
+                renderer.shadowMap.type = THREE.PCFSoftShadowMap; // default THREE.PCFShadowMap
+
+                // LIGHTS
+                const ambient = new THREE.AmbientLight(0x122022);
+                this.scene.add(ambient);
+
+                const light = new THREE.DirectionalLight(0x00ff00);
+                light.position.set(3, 10, 4);
+                light.target.position.set(0, 0, 0);
+
+                light.castShadow = true;
+
+                const lightSize = 10;
+                light.shadow.camera.near = 1;
+                light.shadow.camera.far = 50;
+                light.shadow.camera.left = light.shadow.camera.bottom = -lightSize;
+                light.shadow.camera.right = light.shadow.camera.top = lightSize;
+
+                light.shadow.mapSize.width = 1024;
+                light.shadow.mapSize.height = 1024;
+
+                this.sun = light;
+                this.scene.add(light);
+            }
+
+            set shadowTarget(obj) {
+                if (this.sun !== undefined) this.sun.target = obj;
+            }
+
+            createCannonTrimesh(geometry) {
+                if (!geometry.isBufferGeometry) return null;
+
+                const posAttr = geometry.attributes.position;
+                const vertices = geometry.attributes.position.array;
+                let indices = [];
+                for (let i = 0; i < posAttr.count; i++) {
+                    indices.push(i);
+                }
+
+                return new CANNON.Trimesh(vertices, indices);
+            }
+
+            createCannonConvex(geometry) {
+                if (!geometry.isBufferGeometry) return null;
+
+                const posAttr = geometry.attributes.position;
+                const floats = geometry.attributes.position.array;
+                const vertices = [];
+                const faces = [];
+                let face = [];
+                let index = 0;
+                for (let i = 0; i < posAttr.count; i += 3) {
+                    vertices.push(new CANNON.Vec3(floats[i], floats[i + 1], floats[i + 2]));
+                    face.push(index++);
+                    if (face.length == 3) {
+                        faces.push(face);
+                        face = [];
+                    }
+                }
+
+                return new CANNON.ConvexPolyhedron(vertices, faces);
+            }
+
+            addVisual(body, name, castShadow = true, receiveShadow = true) {
+                body.name = name;
+                if (this.currentMaterial === undefined) this.currentMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff });
+                if (this.settings === undefined) {
+                    this.settings = {
+                        stepFrequency: 60,
+                        quatNormalizeSkip: 2,
+                        quatNormalizeFast: true,
+                        gx: 0,
+                        gy: 0,
+                        gz: 0,
+                        iterations: 3,
+                        tolerance: 0.0001,
+                        k: 1e6,
+                        d: 3,
+                        scene: 0,
+                        paused: false,
+                        rendermode: "solid",
+                        constraints: false,
+                        contacts: false,  // Contact points
+                        cm2contact: false, // center of mass to contact points
+                        normals: false, // contact normals
+                        axes: false, // "local" frame axes
+                        particleSize: 0.1,
+                        shadows: false,
+                        aabbs: false,
+                        profiling: false,
+                        maxSubSteps: 3
+                    }
+                    this.particleGeo = new THREE.SphereGeometry(1, 16, 8);
+                    this.particleMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff });
+                }
+                // What geometry should be used?
+                let mesh;
+                if (body instanceof CANNON.Body) mesh = this.shape2Mesh(body, castShadow, receiveShadow);
+
+                if (mesh) {
+                    // Add body
+                    body.threemesh = mesh;
+                    mesh.castShadow = castShadow;
+                    mesh.receiveShadow = receiveShadow;
+                    this.scene.add(mesh);
+                }
+            }
+
+            shape2Mesh(body, castShadow, receiveShadow) {
+                const obj = new THREE.Object3D();
+                const material = this.currentMaterial;
+                const game = this;
+                let index = 0;
+
+                body.shapes.forEach(function (shape) {
+                    let mesh;
+                    let geometry;
+                    let v0, v1, v2;
+
+                    switch (shape.type) {
+
+                        case CANNON.Shape.types.SPHERE:
+                            const sphere_geometry = new THREE.SphereGeometry(shape.radius, 8, 8);
+                            mesh = new THREE.Mesh(sphere_geometry, material);
+                            break;
+
+                        case CANNON.Shape.types.PARTICLE:
+                            mesh = new THREE.Mesh(game.particleGeo, game.particleMaterial);
+                            const s = this.settings;
+                            mesh.scale.set(s.particleSize, s.particleSize, s.particleSize);
+                            break;
+
+                        case CANNON.Shape.types.PLANE:
+                            geometry = new THREE.PlaneGeometry(10, 10, 4, 4);
+                            mesh = new THREE.Object3D();
+                            const submesh = new THREE.Object3D();
+                            const ground = new THREE.Mesh(geometry, material);
+                            ground.scale.set(100, 100, 100);
+                            submesh.add(ground);
+
+                            mesh.add(submesh);
+                            break;
+
+                        case CANNON.Shape.types.BOX:
+                            const box_geometry = new THREE.BoxGeometry(shape.halfExtents.x * 2,
+                                shape.halfExtents.y * 2,
+                                shape.halfExtents.z * 2);
+                            mesh = new THREE.Mesh(box_geometry, material);
+                            break;
+
+                        case CANNON.Shape.types.CONVEXPOLYHEDRON:
+                            const geo = new THREE.Geometry();
+
+                            // Add vertices
+                            shape.vertices.forEach(function (v) {
+                                geo.vertices.push(new THREE.Vector3(v.x, v.y, v.z));
+                            });
+
+                            shape.faces.forEach(function (face) {
+                                // add triangles
+                                const a = face[0];
+                                for (let j = 1; j < face.length - 1; j++) {
+                                    const b = face[j];
+                                    const c = face[j + 1];
+                                    geo.faces.push(new THREE.Face3(a, b, c));
+                                }
+                            });
+                            geo.computeBoundingSphere();
+                            geo.computeFaceNormals();
+                            mesh = new THREE.Mesh(geo, material);
+                            break;
+
+                        case CANNON.Shape.types.HEIGHTFIELD:
+                            geometry = new THREE.Geometry();
+
+                            v0 = new CANNON.Vec3();
+                            v1 = new CANNON.Vec3();
+                            v2 = new CANNON.Vec3();
+                            for (let xi = 0; xi < shape.data.length - 1; xi++) {
+                                for (let yi = 0; yi < shape.data[xi].length - 1; yi++) {
+                                    for (let k = 0; k < 2; k++) {
+                                        shape.getConvexTrianglePillar(xi, yi, k === 0);
+                                        v0.copy(shape.pillarConvex.vertices[0]);
+                                        v1.copy(shape.pillarConvex.vertices[1]);
+                                        v2.copy(shape.pillarConvex.vertices[2]);
+                                        v0.vadd(shape.pillarOffset, v0);
+                                        v1.vadd(shape.pillarOffset, v1);
+                                        v2.vadd(shape.pillarOffset, v2);
+                                        geometry.vertices.push(
+                                            new THREE.Vector3(v0.x, v0.y, v0.z),
+                                            new THREE.Vector3(v1.x, v1.y, v1.z),
+                                            new THREE.Vector3(v2.x, v2.y, v2.z)
+                                        );
+                                        var i = geometry.vertices.length - 3;
+                                        geometry.faces.push(new THREE.Face3(i, i + 1, i + 2));
+                                    }
+                                }
+                            }
+                            geometry.computeBoundingSphere();
+                            geometry.computeFaceNormals();
+                            mesh = new THREE.Mesh(geometry, material);
+                            break;
+
+                        case CANNON.Shape.types.TRIMESH:
+                            geometry = new THREE.Geometry();
+
+                            v0 = new CANNON.Vec3();
+                            v1 = new CANNON.Vec3();
+                            v2 = new CANNON.Vec3();
+                            for (let i = 0; i < shape.indices.length / 3; i++) {
+                                shape.getTriangleVertices(i, v0, v1, v2);
+                                geometry.vertices.push(
+                                    new THREE.Vector3(v0.x, v0.y, v0.z),
+                                    new THREE.Vector3(v1.x, v1.y, v1.z),
+                                    new THREE.Vector3(v2.x, v2.y, v2.z)
+                                );
+                                var j = geometry.vertices.length - 3;
+                                geometry.faces.push(new THREE.Face3(j, j + 1, j + 2));
+                            }
+                            geometry.computeBoundingSphere();
+                            geometry.computeFaceNormals();
+                            mesh = new THREE.Mesh(geometry, MutationRecordaterial);
+                            break;
+
+                        default:
+                            throw "Visual type not recognized: " + shape.type;
+                    }
+
+                    mesh.receiveShadow = receiveShadow;
+                    mesh.castShadow = castShadow;
+
+                    mesh.traverse(function (child) {
+                        if (child.isMesh) {
+                            child.castShadow = castShadow;
+                            child.receiveShadow = receiveShadow;
+                        }
+                    });
+
+                    var o = body.shapeOffsets[index];
+                    var q = body.shapeOrientations[index++];
+                    mesh.position.set(o.x, o.y, o.z);
+                    mesh.quaternion.set(q.x, q.y, q.z, q.w);
+
+                    obj.add(mesh);
+                });
+
+                return obj;
+            }
+
+            updateBodies(world) {
+                world.bodies.forEach(function (body) {
+                    if (body.threemesh != undefined) {
+                        body.threemesh.position.copy(body.position);
+                        body.threemesh.quaternion.copy(body.quaternion);
+
+                    }
+                });
+            }
+        }
+    </script>
+    <script>
+        let game;
+        document.addEventListener("DOMContentLoaded", function () {
+            game = new Game();
+            window.game = game;//For debugging only
+        });
+
+        // var canvas = document.getElementById('mycanvas');
+        // var width = canvas.width;
+        // var height = canvas.height;
+
+        let handsfree;
+
+        handsfree = new Handsfree({
+            showDebug: true,
+            hands: {
+                enabled: true,
+                maxNumHands: 2,
+                minDetectionConfidence: 0.7,
+            },
+        });
+
+        handsfree.start();
+        handsfree.useGesture({
+            name: "Lpunch",
+            algorithm: "fingerpose",
+            models: "hands",
+            confidence: 7.5,
+            description: [
+                ["addCurl", "Thumb", "HalfCurl", 1],
+                ["addCurl", "Thumb", "NoCurl", 0.2857142857142857],
+                ["addCurl", "Thumb", "FullCurl", 0.14285714285714285],
+                ["addDirection", "Thumb", "VerticalUp", 1],
+                ["addDirection", "Thumb", "DiagonalUpRight", 0.05],
+                ["addDirection", "Thumb", "DiagonalUpLeft", 0.3],
+                ["addDirection", "Thumb", "HorizontalLeft", 0.15],
+                ["addCurl", "Index", "FullCurl", 1],
+                ["addDirection", "Index", "VerticalUp", 0.5625],
+                ["addDirection", "Index", "DiagonalUpLeft", 1],
+                ["addDirection", "Index", "DiagonalUpRight", 0.3125],
+                ["addCurl", "Middle", "FullCurl", 1],
+                ["addDirection", "Middle", "VerticalUp", 1],
+                ["addDirection", "Middle", "DiagonalUpLeft", 0.2608695652173913],
+                ["addDirection", "Middle", "DiagonalUpRight", 0.043478260869565216],
+                ["addCurl", "Ring", "FullCurl", 1],
+                ["addDirection", "Ring", "VerticalUp", 1],
+                ["addDirection", "Ring", "DiagonalUpRight", 0.23809523809523808],
+                ["addDirection", "Ring", "DiagonalUpLeft", 0.19047619047619047],
+                ["addCurl", "Pinky", "FullCurl", 1],
+                ["addDirection", "Pinky", "VerticalUp", 0.7142857142857143],
+                ["addDirection", "Pinky", "DiagonalUpRight", 1],
+                ["addDirection", "Pinky", "DiagonalUpLeft", 0.42857142857142855],
+                ["setWeight", "Middle", 2],
+            ],
+            enabled: true,
+        });
+
+        handsfree.useGesture({
+            name: "Rpunch",
+            algorithm: "fingerpose",
+            models: "hands",
+            confidence: 7.5,
+            description: [
+                ["addCurl", "Thumb", "HalfCurl", 1],
+                ["addCurl", "Thumb", "NoCurl", 0.5789473684210527],
+                ["addDirection", "Thumb", "DiagonalUpRight", 1],
+                ["addDirection", "Thumb", "VerticalUp", 0.4444444444444444],
+                ["addDirection", "Thumb", "HorizontalRight", 0.2222222222222222],
+                ["addCurl", "Index", "FullCurl", 1],
+                ["addDirection", "Index", "DiagonalUpRight", 1],
+                ["addDirection", "Index", "VerticalUp", 0.4],
+                ["addDirection", "Index", "DiagonalUpLeft", 0.4666666666666667],
+                ["addDirection", "Index", "HorizontalRight", 0.13333333333333333],
+                ["addCurl", "Middle", "FullCurl", 1],
+                ["addDirection", "Middle", "DiagonalUpRight", 1],
+                ["addDirection", "Middle", "VerticalUp", 0.8],
+                ["addDirection", "Middle", "DiagonalUpLeft", 0.06666666666666667],
+                ["addDirection", "Middle", "HorizontalRight", 0.13333333333333333],
+                ["addCurl", "Ring", "FullCurl", 1],
+                ["addCurl", "Ring", "HalfCurl", 0.034482758620689655],
+                ["addDirection", "Ring", "DiagonalUpRight", 1],
+                ["addDirection", "Ring", "VerticalUp", 1],
+                ["addDirection", "Ring", "HorizontalRight", 0.14285714285714285],
+                ["addCurl", "Pinky", "FullCurl", 1],
+                ["addCurl", "Pinky", "HalfCurl", 0.034482758620689655],
+                ["addDirection", "Pinky", "VerticalUp", 1],
+                ["addDirection", "Pinky", "DiagonalUpRight", 0.8666666666666667],
+                ["addDirection", "Pinky", "HorizontalRight", 0.13333333333333333],
+                ["setWeight", "Middle", 2],
+            ],
+        });
+
+        handsfree.useGesture({
+            "name": "Lturn",
+            "algorithm": "fingerpose",
+            "models": "hands",
+            "confidence": 7.5,
+            "description": [
+                [
+                    "addCurl",
+                    "Thumb",
+                    "HalfCurl",
+                    1
+                ],
+                [
+                    "addCurl",
+                    "Thumb",
+                    "NoCurl",
+                    0.5
+                ],
+                [
+                    "addDirection",
+                    "Thumb",
+                    "VerticalUp",
+                    1
+                ],
+                [
+                    "addDirection",
+                    "Thumb",
+                    "DiagonalUpRight",
+                    0.9166666666666666
+                ],
+                [
+                    "addDirection",
+                    "Thumb",
+                    "HorizontalRight",
+                    0.16666666666666666
+                ],
+                [
+                    "addDirection",
+                    "Thumb",
+                    "DiagonalUpLeft",
+                    0.4166666666666667
+                ],
+                [
+                    "addCurl",
+                    "Index",
+                    "NoCurl",
+                    1
+                ],
+                [
+                    "addCurl",
+                    "Index",
+                    "HalfCurl",
+                    0.1111111111111111
+                ],
+                [
+                    "addDirection",
+                    "Index",
+                    "VerticalUp",
+                    1
+                ],
+                [
+                    "addDirection",
+                    "Index",
+                    "DiagonalUpLeft",
+                    0.1111111111111111
+                ],
+                [
+                    "addCurl",
+                    "Middle",
+                    "NoCurl",
+                    1
+                ],
+                [
+                    "addCurl",
+                    "Middle",
+                    "HalfCurl",
+                    0.034482758620689655
+                ],
+                [
+                    "addDirection",
+                    "Middle",
+                    "VerticalUp",
+                    1
+                ],
+                [
+                    "addDirection",
+                    "Middle",
+                    "DiagonalUpRight",
+                    0.034482758620689655
+                ],
+                [
+                    "addCurl",
+                    "Ring",
+                    "FullCurl",
+                    1
+                ],
+                [
+                    "addCurl",
+                    "Ring",
+                    "HalfCurl",
+                    0.034482758620689655
+                ],
+                [
+                    "addDirection",
+                    "Ring",
+                    "VerticalUp",
+                    1
+                ],
+                [
+                    "addDirection",
+                    "Ring",
+                    "DiagonalUpRight",
+                    0.1
+                ],
+                [
+                    "addDirection",
+                    "Ring",
+                    "DiagonalUpLeft",
+                    0.4
+                ],
+                [
+                    "addCurl",
+                    "Pinky",
+                    "FullCurl",
+                    1
+                ],
+                [
+                    "addCurl",
+                    "Pinky",
+                    "NoCurl",
+                    0.034482758620689655
+                ],
+                [
+                    "addDirection",
+                    "Pinky",
+                    "VerticalUp",
+                    0.8181818181818182
+                ],
+                [
+                    "addDirection",
+                    "Pinky",
+                    "DiagonalUpLeft",
+                    1
+                ],
+                [
+                    "addDirection",
+                    "Pinky",
+                    "DiagonalUpRight",
+                    0.9090909090909091
+                ],
+                [
+                    "setWeight",
+                    "Index",
+                    2
+                ],
+                [
+                    "setWeight",
+                    "Middle",
+                    2
+                ]
+            ],
+            "enabled": true
+        })
+
+        handsfree.useGesture({
+            "name": "Rturn",
+            "algorithm": "fingerpose",
+            "models": "hands",
+            "confidence": 7.5,
+            "description": [
+                [
+                    "addCurl",
+                    "Thumb",
+                    "NoCurl",
+                    1
+                ],
+                [
+                    "addCurl",
+                    "Thumb",
+                    "HalfCurl",
+                    0.3333333333333333
+                ],
+                [
+                    "addCurl",
+                    "Thumb",
+                    "FullCurl",
+                    0.09523809523809523
+                ],
+                [
+                    "addDirection",
+                    "Thumb",
+                    "VerticalUp",
+                    1
+                ],
+                [
+                    "addDirection",
+                    "Thumb",
+                    "DiagonalUpRight",
+                    0.8333333333333334
+                ],
+                [
+                    "addDirection",
+                    "Thumb",
+                    "DiagonalUpLeft",
+                    0.4166666666666667
+                ],
+                [
+                    "addDirection",
+                    "Thumb",
+                    "HorizontalLeft",
+                    0.25
+                ],
+                [
+                    "addCurl",
+                    "Index",
+                    "NoCurl",
+                    1
+                ],
+                [
+                    "addCurl",
+                    "Index",
+                    "HalfCurl",
+                    0.07142857142857142
+                ],
+                [
+                    "addDirection",
+                    "Index",
+                    "VerticalUp",
+                    1
+                ],
+                [
+                    "addDirection",
+                    "Index",
+                    "DiagonalUpRight",
+                    0.5
+                ],
+                [
+                    "addCurl",
+                    "Middle",
+                    "NoCurl",
+                    1
+                ],
+                [
+                    "addDirection",
+                    "Middle",
+                    "VerticalUp",
+                    1
+                ],
+                [
+                    "addDirection",
+                    "Middle",
+                    "DiagonalUpRight",
+                    0.36363636363636365
+                ],
+                [
+                    "addCurl",
+                    "Ring",
+                    "FullCurl",
+                    1
+                ],
+                [
+                    "addDirection",
+                    "Ring",
+                    "VerticalUp",
+                    0.875
+                ],
+                [
+                    "addDirection",
+                    "Ring",
+                    "DiagonalUpRight",
+                    1
+                ],
+                [
+                    "addCurl",
+                    "Pinky",
+                    "FullCurl",
+                    1
+                ],
+                [
+                    "addDirection",
+                    "Pinky",
+                    "VerticalUp",
+                    0.3125
+                ],
+                [
+                    "addDirection",
+                    "Pinky",
+                    "DiagonalUpRight",
+                    1
+                ],
+                [
+                    "addDirection",
+                    "Pinky",
+                    "DiagonalUpLeft",
+                    0.5625
+                ],
+                [
+                    "setWeight",
+                    "Index",
+                    2
+                ],
+                [
+                    "setWeight",
+                    "Middle",
+                    2
+                ]
+            ]
+        })
+
+        function draw() {
+            let out = drawHand();
+        }
+
+        function drawHand() {
+            // console.log("called");
+            let out = {};
+            if (handsfree.data.hands) {
+                try {
+                    let out = handsfree.model.hands.getGesture();
+                    // handsfree.use("logger", ({ hands }) => {
+                    // 	if (!hands) return;
+                    // 	console.log(hands.gesture[0].name);
+                    // });
+                    if (out[0].name == "Lpunch") {
+                        console.log(out[0].name);
+                        game.updateDrive(-1, 0);
+                    } else if (out[1].name == "Rpunch") {
+                        console.log(out[1].name);
+                        game.updateDrive(1, 0);
+                    }
+                    if (out[0].name == "Lturn") {
+                        console.log(out[0].name);
+                        game.updateDrive(-2, -20);
+                    }
+                    if (out[1].name == "Rturn") {
+                        console.log(out[1].name);
+                        game.updateDrive(-2, 20);
+                        // game.updateDrive(-1, 10);
+                    } else {
+                        console.log("NOTHING");
+                    }
+                    console.log(out);
+                    // else {
+                    // }
+                } catch (e) { }
+            }
+            return out;
+        }
+
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,22 @@
+html,
+body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+canvas {
+    display: block;
+}
+
+.handsfree-canvas, .handsfree-canvas-video {
+    position: relative;
+    top: -200px;
+    left: 80%;
+    height: 200px !important;
+    width: 350px !important;
+}
+
+#handsfree-canvas-hands-1 {
+    position: absolute;
+}

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<title></title>
+	<style>
+		body,
+		html {
+			height: 100%;
+			margin: 0;
+			padding: 0;
+			font-family: sans-serif;
+			background-color: black;
+			overflow: hidden;
+		}
+
+		* {
+			font-family: sans-serif;
+			color: #fff;
+		}
+
+		h1 {
+			color: black;
+			border-radius: 20px;
+			background-color: white;
+			line-height: 1.5em;
+			text-shadow: 0 0 20px #fff;
+			text-align: center;
+		}
+
+		.particles-js-canvas-el {
+			position: relative;
+		}
+
+		#container {
+			margin: 0 auto;
+			margin-top: 100px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+
+		#container>div {
+			padding: 50px 100px;
+			margin: 40px;
+			border: 2px solid white;
+			border-radius: 20px;
+		}
+
+		#container>div:hover {
+			cursor:pointer;
+			box-shadow:0 0 50px red;
+			color: red;
+			transition: all 0.2s linear;
+		}
+	</style>
+</head>
+
+<body id='particles-js'>
+	<h1>Traximo</h1>
+	<div id="container">
+		<div>
+			<h3><a href="./Ghosts/index.html">Ghosts Hunter</a></h3>
+		</div>
+		<div>
+			<h3><a href="./Car/index.html">Car Simulation</a></h3>
+		</div>
+	</div>
+	<script src='particles.js'></script>
+	<script src='app.js'></script>
+</body>
+
+</html>
